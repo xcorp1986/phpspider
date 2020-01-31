@@ -13,14 +13,17 @@
 // PHPSpider数据库类文件
 //----------------------------------
 
+namespace phpspider\core;
+
 class db
 {
     private static $configs = array();
     private static $rsid;
     private static $links = array();
     private static $link_name = 'default';
+    private static $autocommiting = false;
 
-    public static function _init_mysql()
+    public static function _init()
     {
         // 获取配置
         $config = self::$link_name == 'default' ? self::_get_default_config() : self::$configs[self::$link_name];
@@ -35,7 +38,7 @@ class db
                 self::$links[self::$link_name]['pid'] = function_exists('posix_getpid') ? posix_getpid() : 0; 
                 //echo "progress[".self::$links[self::$link_name]['pid']."] create db connect[".self::$link_name."]\n";
             }
-            self::$links[self::$link_name]['conn'] = @mysqli_connect($config['host'], $config['user'], $config['pass'], $config['name'], $config['port']);
+            self::$links[self::$link_name]['conn'] = mysqli_connect($config['host'], $config['user'], $config['pass'], $config['name'], $config['port']);
             if(mysqli_connect_errno())
             {
                 self::$links[self::$link_name]['fail']++;
@@ -47,7 +50,7 @@ class db
                 {
                     exit(250);
                 }
-                self::_init_mysql();
+                self::_init($config);
             }
             else
             {
@@ -87,7 +90,7 @@ class db
             }
         }
         // 注意，只会连接最后一个，不过貌似也够用了啊
-        self::_init_mysql();
+        self::_init();
     }
 
     /**
@@ -153,28 +156,35 @@ class db
 
     public static function autocommit($mode = false)
     {
-        self::$links[self::$link_name]['conn'] = self::_init_mysql();
-        // $int = $mode ? 1 : 0;
-        // return @mysqli_query(self::$links[self::$link_name]['conn'], "SET autocommit={$int}");
+        if ( self::$autocommiting ) 
+        {
+            return true;
+        }
+
+        self::$autocommiting = true;
+
+        self::_init();
         return mysqli_autocommit(self::$links[self::$link_name]['conn'], $mode);
     }
 
     public static function begin_tran()
     {
-        // self::$links[self::$link_name]['conn'] = self::_init_mysql( true );
-        // return @mysqli_query(self::$links[self::$link_name]['conn'], 'BEGIN');
         return self::autocommit(false);
     }
 
     public static function commit()
     {
-        return mysqli_commit(self::$links[self::$link_name]['conn']);
+        mysqli_commit(self::$links[self::$link_name]['conn']);
+        self::autocommit(true);
+        return true;
     }
 
 
     public static function rollback()
     {
-        return mysqli_rollback(self::$links[self::$link_name]['conn']);
+        mysqli_rollback(self::$links[self::$link_name]['conn']);
+        self::autocommit(true);
+        return true;
     }
 
     public static function query($sql)
@@ -182,7 +192,7 @@ class db
         $sql = trim($sql);
 
         // 初始化数据库
-        self::_init_mysql();
+        self::_init();
         self::$rsid = @mysqli_query(self::$links[self::$link_name]['conn'], $sql);
 
         if (self::$rsid === false)
@@ -239,7 +249,7 @@ class db
         return $row;
     }
 
-    public static function get_one($sql, $func = '')
+    public static function get_one($sql)
     {
         if (!preg_match("/limit/i", $sql))
         {
@@ -248,33 +258,25 @@ class db
         $rsid = self::query($sql);
         if ($rsid === false) 
         {
-            return;
+            return array();
         }
         $row = self::fetch($rsid);
         self::free($rsid);
-        if (!empty($func))
-        {
-            return call_user_func($func, $row);
-        }
         return $row;
     }
 
-    public static function get_all($sql, $func = '')
+    public static function get_all($sql)
     {
         $rsid = self::query($sql);
         if ($rsid === false) 
         {
-            return;
+            return array();
         }
         while ( $row = self::fetch($rsid) )
         {
             $rows[] = $row;
         }
         self::free($rsid);
-        if (!empty($func))
-        {
-            return call_user_func($func, $rows);
-        }
         return empty($rows) ? false : $rows;
     }
 
@@ -502,7 +504,7 @@ class db
         {
             @mysqli_close(self::$links[self::$link_name]['conn']);
             self::$links[self::$link_name]['conn'] = null;
-            self::_init_mysql();
+            self::_init();
         }
     }
 
